@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { NavLink } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 import AppLayout from '../components/layout/AppLayout'
 
-const OFFLINE_THRESHOLD = 30 * 1000
+const OFFLINE_THRESHOLD = 5 * 60 * 1000   // 5 minutes
 
-/* Static device metadata (hardware info that doesn't change) */
+/* Static hardware metadata — supplements live DB data per known device */
 const DEVICE_META = {
   'esp32-01': {
-    name:     'Node A',
-    location: 'แปลง A — กลางสวน',
     firmware: 'v1.2.3',
     hardware: 'ESP32-WROOM-32',
     mic:      'INMP441 (I2S MEMS)',
@@ -72,8 +72,8 @@ function SignalBars({ rssi }) {
   )
 }
 
-function DeviceCard({ deviceId, liveData }) {
-  const meta    = DEVICE_META[deviceId] || {}
+function DeviceCard({ device, liveData }) {
+  const meta    = DEVICE_META[device.id] || {}
   const [open, setOpen] = useState(false)
 
   const lastSeen = liveData?.last_seen
@@ -93,7 +93,6 @@ function DeviceCard({ deviceId, liveData }) {
         display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
       }}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-          {/* Device icon */}
           <div style={{
             width: 48, height: 48, borderRadius: 14, flexShrink: 0,
             background: online ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.1)',
@@ -111,13 +110,13 @@ function DeviceCard({ deviceId, liveData }) {
             </svg>
           </div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{meta.name || deviceId}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{meta.location}</div>
-            <div style={{ fontSize: 10, color: 'var(--text-2)', marginTop: 1, fontFamily: 'monospace' }}>{deviceId}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{device.display_name}</div>
+            {device.location && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{device.location}</div>}
+            <div style={{ fontSize: 10, color: 'var(--text-2)', marginTop: 1, fontFamily: 'monospace' }}>{device.id}</div>
           </div>
         </div>
 
-        {/* Online chip with pulsing dot */}
+        {/* Online chip */}
         {liveData === undefined ? (
           <div className="skeleton" style={{ width: 72, height: 24, borderRadius: 99 }} />
         ) : (
@@ -137,11 +136,11 @@ function DeviceCard({ deviceId, liveData }) {
       {/* Stats row */}
       <div className="dev-stats-row">
         {[
-          { label: 'เห็นล่าสุด',   value: liveData === undefined
+          { label: 'เห็นล่าสุด',  value: liveData === undefined
               ? <div className="skeleton" style={{ height: 18, width: 60, borderRadius: 6 }} />
               : lastSeenStr },
-          { label: 'แบตเตอรี่',  value: <BatteryIcon pct={meta.battery ?? 0} /> },
-          { label: 'สัญญาณ',     value: <SignalBars rssi={meta.signal ?? -100} /> },
+          { label: 'แบตเตอรี่', value: <BatteryIcon pct={meta.battery ?? 0} /> },
+          { label: 'สัญญาณ',    value: <SignalBars rssi={meta.signal ?? -100} /> },
         ].map((item, i) => (
           <div key={i} className="dev-stats-item">
             <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
@@ -170,11 +169,11 @@ function DeviceCard({ deviceId, liveData }) {
         {open && (
           <div style={{ padding: '0 22px 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[
-              { label: 'ฮาร์ดแวร์',  value: meta.hardware,  mono: false },
-              { label: 'เฟิร์มแวร์', value: meta.firmware,  mono: true  },
-              { label: 'ไมโครโฟน',   value: meta.mic,       mono: false },
-              { label: 'LoRa',        value: meta.lora,      mono: false },
-              { label: 'รหัสอุปกรณ์', value: deviceId,      mono: true  },
+              { label: 'ฮาร์ดแวร์',  value: meta.hardware  || '—', mono: false },
+              { label: 'เฟิร์มแวร์', value: meta.firmware  || '—', mono: true  },
+              { label: 'ไมโครโฟน',   value: meta.mic       || '—', mono: false },
+              { label: 'LoRa',        value: meta.lora      || '—', mono: false },
+              { label: 'รหัสอุปกรณ์', value: device.id,            mono: true  },
             ].map(row => (
               <div key={row.label} style={{
                 display: 'flex', justifyContent: 'space-between',
@@ -195,11 +194,22 @@ function DeviceCard({ deviceId, liveData }) {
 }
 
 export default function Devices() {
-  const [liveMap, setLiveMap] = useState({})   // { [deviceId]: board_status row }
-  const deviceIds = Object.keys(DEVICE_META)
+  const { user }  = useAuth()
+  const [devices,  setDevices]  = useState([])
+  const [liveMap,  setLiveMap]  = useState({})
+  const [loading,  setLoading]  = useState(true)
+
+  const loadDevices = useCallback(async () => {
+    if (!user) return
+    const { data } = await supabase
+      .from('devices').select('*').eq('user_id', user.id).order('created_at')
+    setDevices(data || [])
+    setLoading(false)
+  }, [user])
+
+  useEffect(() => { loadDevices() }, [loadDevices])
 
   useEffect(() => {
-    /* Initial fetch */
     supabase.from('board_status').select('*').then(({ data }) => {
       if (!data) return
       const map = {}
@@ -207,7 +217,6 @@ export default function Devices() {
       setLiveMap(map)
     })
 
-    /* Realtime */
     const channel = supabase.channel('devices-page')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'board_status' },
         ({ new: row }) => setLiveMap(prev => ({ ...prev, [row.id]: row })))
@@ -224,9 +233,9 @@ export default function Devices() {
     return () => { supabase.removeChannel(channel); clearInterval(t) }
   }, [])
 
-  const totalOnline = deviceIds.filter(id => {
-    const d = liveMap[id]
-    return d && Date.now() - new Date(d.last_seen).getTime() < OFFLINE_THRESHOLD
+  const totalOnline = devices.filter(d => {
+    const live = liveMap[d.id]
+    return live && Date.now() - new Date(live.last_seen).getTime() < OFFLINE_THRESHOLD
   }).length
 
   return (
@@ -237,31 +246,83 @@ export default function Devices() {
         <p style={{ fontSize: 13, color: 'var(--text-2)' }}>สถานะและข้อมูลทางเทคนิค — ESP32 โหนด</p>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 28, flexWrap: 'wrap' }}>
-        {[
-          { label: 'อุปกรณ์ทั้งหมด', value: deviceIds.length,                    color: '#8B5CF6' },
-          { label: 'ออนไลน์',        value: totalOnline,                          color: '#22c55e' },
-          { label: 'ออฟไลน์',        value: deviceIds.length - totalOnline,       color: '#ef4444' },
-        ].map(s => (
-          <div key={s.label} className="glass" style={{ padding: '16px 22px', display: 'flex', alignItems: 'center', gap: 14, flex: '1 1 140px' }}>
-            <div style={{ width: 40, height: 40, borderRadius: 12, background: `${s.color}18`, border: `1px solid ${s.color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: s.color }} />
+      {/* Loading skeleton */}
+      {loading && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%,360px), 1fr))', gap: 20 }}>
+          {[1, 2].map(i => (
+            <div key={i} className="skeleton" style={{ height: 240, borderRadius: 18 }} />
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && devices.length === 0 && (
+        <div style={{
+          textAlign: 'center', padding: '60px 20px',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+        }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: 18,
+            background: 'rgba(139,92,246,.1)', border: '1.5px solid rgba(139,92,246,.25)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#8B5CF6" strokeWidth="1.5">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+              <rect x="9" y="9" width="6" height="6"/>
+              <line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/>
+              <line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/>
+              <line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/>
+              <line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>
+              ยังไม่มีอุปกรณ์
             </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{s.value}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+              เพิ่ม ESP32 Node ในการตั้งค่าเพื่อเริ่มตรวจสอบสถานะ
             </div>
           </div>
-        ))}
-      </div>
+          <NavLink to="/settings" style={{
+            padding: '10px 22px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+            background: 'rgba(139,92,246,.15)', border: '1px solid rgba(139,92,246,.3)',
+            color: 'var(--accent)', textDecoration: 'none',
+          }}>
+            ไปที่การตั้งค่า →
+          </NavLink>
+        </div>
+      )}
 
-      {/* Device grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%,360px), 1fr))', gap: 20 }}>
-        {deviceIds.map(id => (
-          <DeviceCard key={id} deviceId={id} liveData={liveMap[id]} />
-        ))}
-      </div>
+      {/* Content */}
+      {!loading && devices.length > 0 && (
+        <>
+          {/* Stats */}
+          <div style={{ display: 'flex', gap: 16, marginBottom: 28, flexWrap: 'wrap' }}>
+            {[
+              { label: 'อุปกรณ์ทั้งหมด', value: devices.length,              color: '#8B5CF6' },
+              { label: 'ออนไลน์',        value: totalOnline,                  color: '#22c55e' },
+              { label: 'ออฟไลน์',        value: devices.length - totalOnline, color: '#ef4444' },
+            ].map(s => (
+              <div key={s.label} className="glass" style={{ padding: '16px 22px', display: 'flex', alignItems: 'center', gap: 14, flex: '1 1 140px' }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: `${s.color}18`, border: `1px solid ${s.color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: s.color }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 3 }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Device grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%,360px), 1fr))', gap: 20 }}>
+            {devices.map(d => (
+              <DeviceCard key={d.id} device={d} liveData={liveMap[d.id]} />
+            ))}
+          </div>
+        </>
+      )}
     </AppLayout>
   )
 }

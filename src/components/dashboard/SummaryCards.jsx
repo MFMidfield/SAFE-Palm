@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
 
-const OFFLINE_THRESHOLD = 30 * 1000
+const OFFLINE_THRESHOLD = 5 * 60 * 1000   // 5 minutes
 
 function StatCard({ label, value, sub, accent }) {
   return (
@@ -13,47 +14,118 @@ function StatCard({ label, value, sub, accent }) {
   )
 }
 
+/* info shape: null (loading) | { total: 0 } | { total: 1, online: bool, lastSeen: string|null } | { total: N, count: N } */
 function NodeCard() {
-  const [status, setStatus] = useState(null)
+  const { user } = useAuth()
+  const [info, setInfo] = useState(null)
 
   useEffect(() => {
-    fetchStatus()
+    if (!user) return
+
+    async function load() {
+      const { data: devData } = await supabase
+        .from('devices').select('id').eq('user_id', user.id)
+      const devList = devData || []
+
+      if (devList.length === 0) {
+        setInfo({ total: 0 })
+        return
+      }
+
+      const ids = devList.map(d => d.id)
+      const { data: statusData } = await supabase
+        .from('board_status').select('*').in('id', ids)
+
+      const now = Date.now()
+      const map = {}
+      ;(statusData || []).forEach(row => { map[row.id] = row })
+
+      if (devList.length === 1) {
+        const s = map[devList[0].id]
+        const online = !!(s && now - new Date(s.last_seen).getTime() < OFFLINE_THRESHOLD)
+        setInfo({ total: 1, online, lastSeen: s?.last_seen || null })
+      } else {
+        const count = devList.filter(d => {
+          const s = map[d.id]
+          return s && now - new Date(s.last_seen).getTime() < OFFLINE_THRESHOLD
+        }).length
+        setInfo({ total: devList.length, count })
+      }
+    }
+
+    load()
+
     const channel = supabase.channel('node-status-card')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'board_status' },
-        payload => checkOnline(payload.new))
+        () => load())
       .subscribe()
-    const t = setInterval(fetchStatus, 15000)
+
+    const t = setInterval(load, 15000)
     return () => { supabase.removeChannel(channel); clearInterval(t) }
-  }, [])
+  }, [user])
 
-  const fetchStatus = async () => {
-    const { data } = await supabase.from('board_status').select('*').eq('id', 'esp32-01').single()
-    if (data) checkOnline(data)
-  }
-  const checkOnline = d => {
-    const online = Date.now() - new Date(d.last_seen).getTime() < OFFLINE_THRESHOLD
-    setStatus({ ...d, online })
+  const label = (
+    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '.6px' }}>
+      โหนด ESP32
+    </div>
+  )
+
+  /* Loading */
+  if (info === null) {
+    return (
+      <div className="glass db-pad-s">
+        {label}
+        <div className="skeleton" style={{ height: 28, width: 80, marginTop: 4 }} />
+      </div>
+    )
   }
 
-  const online = status?.online
+  /* No devices registered yet */
+  if (info.total === 0) {
+    return (
+      <div className="glass db-pad-s">
+        {label}
+        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-2)', lineHeight: 1, marginTop: 4 }}>—</div>
+        <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2 }}>ยังไม่มีอุปกรณ์</div>
+      </div>
+    )
+  }
+
+  /* Single device */
+  if (info.total === 1) {
+    const { online, lastSeen } = info
+    return (
+      <div className="glass db-pad-s">
+        {label}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+          <span className={`dot ${online ? 'dot-ok' : 'dot-danger'}`} />
+          <span style={{ fontSize: 22, fontWeight: 700, color: online ? 'var(--ok)' : 'var(--danger)' }}>
+            {online ? 'ออนไลน์' : 'ออฟไลน์'}
+          </span>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
+          {lastSeen ? `เห็นล่าสุด ${new Date(lastSeen).toLocaleTimeString('th-TH')}` : 'ไม่พบข้อมูล'}
+        </div>
+      </div>
+    )
+  }
+
+  /* Multiple devices — show count */
+  const { count, total } = info
+  const allOnline = count === total
+  const anyOnline = count > 0
+  const statusColor = allOnline ? 'var(--ok)' : anyOnline ? 'var(--warn)' : 'var(--danger)'
+  const dotClass    = allOnline ? 'dot-ok'    : anyOnline ? 'dot-warn'    : 'dot-danger'
   return (
     <div className="glass db-pad-s">
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '.6px' }}>โหนด ESP32</div>
-      {status === null ? (
-        <div className="skeleton" style={{ height: 28, width: 80, marginTop: 4 }} />
-      ) : (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-            <span className={`dot ${online ? 'dot-ok' : 'dot-danger'}`} />
-            <span style={{ fontSize: 22, fontWeight: 700, color: online ? 'var(--ok)' : 'var(--danger)' }}>
-              {online ? 'ออนไลน์' : 'ออฟไลน์'}
-            </span>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
-            เห็นล่าสุด {new Date(status.last_seen).toLocaleTimeString('th-TH')}
-          </div>
-        </>
-      )}
+      {label}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <span className={`dot ${dotClass}`} />
+        <span style={{ fontSize: 22, fontWeight: 700, color: statusColor }}>
+          {count}/{total}
+        </span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-2)' }}>ออนไลน์</div>
     </div>
   )
 }
