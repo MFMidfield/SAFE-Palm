@@ -86,6 +86,14 @@
   background-size: 200% 100%;
 }
 
+/* Modal box in light mode — solid white so it doesn't absorb the dark overlay behind it */
+[data-theme="light"] .stg-modal-box {
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.18);
+}
+
 /* ─── Base ─── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

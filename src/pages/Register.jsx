@@ -130,7 +130,9 @@ export default function Register() {
   const [devices, setDevices]           = useState([])
   const [showDevForm, setShowDevForm]   = useState(false)
   const [devForm, setDevForm]           = useState(EMPTY_DEVICE)
-  const [devError, setDevError]         = useState('')
+  const [devPairingCode, setDevPairingCode] = useState('')
+  const [devVerifying, setDevVerifying]     = useState(false)
+  const [devError, setDevError]             = useState('')
 
   const setP = k => e => setProfile(p => ({ ...p, [k]: e.target.value }))
 
@@ -143,18 +145,31 @@ export default function Register() {
   }
 
   /* ── Device helpers ── */
-  function addDevice() {
+  async function addDevice() {
     setDevError('')
     if (!devForm.id.trim() || !devForm.display_name.trim()) {
       setDevError('กรุณากรอก Device ID และชื่อ')
+      return
+    }
+    if (!/^\d{6}$/.test(devPairingCode)) {
+      setDevError('กรุณากรอกรหัสจับคู่ 6 หลัก')
       return
     }
     if (devices.find(d => d.id === devForm.id.trim())) {
       setDevError('Device ID นี้มีอยู่แล้ว')
       return
     }
+    setDevVerifying(true)
+    await new Promise(r => setTimeout(r, 800))   // mock async verify
+    setDevVerifying(false)
+    /* mockup: "123456" คือรหัสทดสอบ */
+    if (devPairingCode !== '123456') {
+      setDevError('รหัสไม่ถูกต้อง — ตรวจสอบรหัสเครื่อง ESP32 อีกครั้ง')
+      return
+    }
     setDevices(prev => [...prev, { ...devForm, id: devForm.id.trim(), display_name: devForm.display_name.trim() }])
     setDevForm(EMPTY_DEVICE)
+    setDevPairingCode('')
     setShowDevForm(false)
   }
 
@@ -323,9 +338,17 @@ export default function Register() {
         {/* ─── Step 3: Devices ─── */}
         {step === 3 && (
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+
             {/* Info note */}
-            <div style={{ padding:'12px 14px', borderRadius:10, background:'rgba(139,92,246,.07)', border:'1px solid rgba(139,92,246,.18)', fontSize:12, color:'var(--text-2)', lineHeight:1.6 }}>
-              เพิ่มอุปกรณ์ ESP32 ของคุณ หรือข้ามแล้วเพิ่มทีหลังใน <strong style={{ color:'var(--accent)' }}>Settings → อุปกรณ์</strong>
+            <div style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'12px 14px', borderRadius:10, background:'rgba(139,92,246,.07)', border:'1px solid rgba(139,92,246,.18)' }}>
+              <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="#8B5CF6" strokeWidth="1.8" style={{ flexShrink:0, marginTop:1 }}>
+                <circle cx="10" cy="10" r="8"/><line x1="10" y1="9" x2="10" y2="14"/>
+                <circle cx="10" cy="6.5" r=".9" fill="#8B5CF6" stroke="none"/>
+              </svg>
+              <div style={{ fontSize:12, color:'var(--text-2)', lineHeight:1.65 }}>
+                ต้องใช้ <strong style={{ color:'var(--accent)' }}>รหัสจับคู่ 6 หลัก</strong> จาก Serial Monitor ของ ESP32
+                เพื่อเชื่อมอุปกรณ์ หรือข้ามแล้วเพิ่มทีหลังใน <strong style={{ color:'var(--accent)' }}>Settings</strong>
+              </div>
             </div>
 
             {/* Device list */}
@@ -333,14 +356,21 @@ export default function Register() {
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                 {devices.map(d => (
                   <div key={d.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'10px 14px', borderRadius:10, background:'var(--glass-bg)', border:'1px solid var(--glass-border)' }}>
-                    <div>
-                      <div style={{ fontSize:13, fontWeight:700, color:'var(--text)' }}>{d.display_name}</div>
-                      <div style={{ fontSize:10, color:'var(--text-2)', fontFamily:'monospace', marginTop:1 }}>
-                        {d.id} &nbsp;·&nbsp;
-                        <span style={{ color: d.role==='gateway'?'#06b6d4':'var(--accent)' }}>
-                          {d.role==='gateway'?'Gateway':'Node'}
-                        </span>
-                        {d.location && ` · ${d.location}`}
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <div style={{ width:32, height:32, borderRadius:9, background:'rgba(34,197,94,.1)', border:'1px solid rgba(34,197,94,.25)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="var(--ok)" strokeWidth="2.5">
+                          <polyline points="4 10 8 14 16 6"/>
+                        </svg>
+                      </div>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:700, color:'var(--text)' }}>{d.display_name}</div>
+                        <div style={{ fontSize:10, color:'var(--text-2)', fontFamily:'monospace', marginTop:1 }}>
+                          {d.id} &nbsp;·&nbsp;
+                          <span style={{ color: d.role==='gateway'?'#06b6d4':'var(--accent)' }}>
+                            {d.role==='gateway'?'Gateway':'Node'}
+                          </span>
+                          {d.location && ` · ${d.location}`}
+                        </div>
                       </div>
                     </div>
                     <button onClick={() => setDevices(prev => prev.filter(x => x.id!==d.id))}
@@ -354,19 +384,36 @@ export default function Register() {
 
             {/* Inline add form */}
             {showDevForm ? (
-              <div style={{ display:'flex', flexDirection:'column', gap:12, padding:'16px 16px', borderRadius:12, background:'var(--glass-bg)', border:'1px solid var(--glass-border)' }}>
-                <div style={{ fontSize:12, fontWeight:700, color:'var(--text)', marginBottom:2 }}>เพิ่มอุปกรณ์ใหม่</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:12, padding:'16px', borderRadius:12, background:'var(--glass-bg)', border:'1px solid var(--glass-border)' }}>
+                <div style={{ fontSize:12, fontWeight:700, color:'var(--text)' }}>เพิ่มอุปกรณ์ใหม่</div>
+
                 <div className="reg-2col">
                   <Field label="Device ID" required>
                     <input className="input-glass" placeholder="esp32-01" value={devForm.id}
-                      onChange={e => setDevForm(f => ({ ...f, id: e.target.value }))} />
+                      onChange={e => { setDevForm(f => ({ ...f, id: e.target.value })); setDevError('') }} />
                   </Field>
-                  <Field label="ชื่อ" required>
+                  <Field label="รหัสจับคู่" required>
+                    <input
+                      className="input-glass"
+                      placeholder="6 หลัก"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={devPairingCode}
+                      onChange={e => { setDevPairingCode(e.target.value.replace(/\D/g,'')); setDevError('') }}
+                      style={{
+                        letterSpacing: devPairingCode ? '.3em' : 0,
+                        fontFamily: devPairingCode ? 'monospace' : 'inherit',
+                        borderColor: devError && devError.includes('รหัส') ? 'rgba(239,68,68,.55)' : undefined,
+                      }}
+                    />
+                  </Field>
+                </div>
+
+                <div className="reg-2col">
+                  <Field label="ชื่ออุปกรณ์" required>
                     <input className="input-glass" placeholder="Node A" value={devForm.display_name}
                       onChange={e => setDevForm(f => ({ ...f, display_name: e.target.value }))} />
                   </Field>
-                </div>
-                <div className="reg-2col">
                   <Field label="บทบาท">
                     <select className="input-glass" value={devForm.role}
                       onChange={e => setDevForm(f => ({ ...f, role: e.target.value }))}>
@@ -374,31 +421,53 @@ export default function Register() {
                       <option value="gateway">Gateway (ส่งข้อมูล)</option>
                     </select>
                   </Field>
-                  <Field label="ตำแหน่ง">
-                    <input className="input-glass" placeholder="แปลง A (ไม่บังคับ)" value={devForm.location}
-                      onChange={e => setDevForm(f => ({ ...f, location: e.target.value }))} />
-                  </Field>
                 </div>
-                {devError && <div style={{ fontSize:11, color:'var(--danger)' }}>{devError}</div>}
+
+                <Field label="ตำแหน่ง">
+                  <input className="input-glass" placeholder="แปลง A (ไม่บังคับ)" value={devForm.location}
+                    onChange={e => setDevForm(f => ({ ...f, location: e.target.value }))} />
+                </Field>
+
+                {/* Error */}
+                {devError && (
+                  <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:11, color:'var(--danger)', padding:'8px 11px', background:'rgba(239,68,68,.08)', borderRadius:8, border:'1px solid rgba(239,68,68,.2)' }}>
+                    <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink:0 }}>
+                      <circle cx="10" cy="10" r="8"/><line x1="10" y1="7" x2="10" y2="11"/>
+                      <circle cx="10" cy="13.5" r=".8" fill="var(--danger)" stroke="none"/>
+                    </svg>
+                    {devError}
+                  </div>
+                )}
+
                 <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
-                  <button onClick={() => { setShowDevForm(false); setDevForm(EMPTY_DEVICE); setDevError('') }}
+                  <button onClick={() => { setShowDevForm(false); setDevForm(EMPTY_DEVICE); setDevPairingCode(''); setDevError('') }}
                     className="btn-glass" style={{ fontSize:12, padding:'7px 14px' }}>ยกเลิก</button>
-                  <button onClick={addDevice}
-                    className="btn-accent" style={{ fontSize:12, padding:'7px 16px' }}>+ เพิ่ม</button>
+                  <button
+                    onClick={addDevice}
+                    disabled={devVerifying}
+                    className="btn-accent"
+                    style={{ fontSize:12, padding:'7px 16px', display:'flex', alignItems:'center', gap:6, opacity: devVerifying ? .65 : 1 }}>
+                    {devVerifying ? (
+                      <>
+                        <span style={{ width:11, height:11, borderRadius:'50%', border:'2px solid rgba(255,255,255,.3)', borderTopColor:'#fff', animation:'spin .7s linear infinite', display:'inline-block' }} />
+                        กำลังตรวจสอบ...
+                      </>
+                    ) : '+ เพิ่ม'}
+                  </button>
                 </div>
               </div>
             ) : (
               <button onClick={() => setShowDevForm(true)} style={{
-                padding:'10px', borderRadius:10, background:'transparent',
+                padding:'12px', borderRadius:10, background:'transparent',
                 border:'1px dashed var(--glass-border)', color:'var(--text-2)',
                 cursor:'pointer', fontSize:12, fontWeight:600,
-                display:'flex', alignItems:'center', justifyContent:'center', gap:6,
+                display:'flex', alignItems:'center', justifyContent:'center', gap:7,
                 transition:'all .2s',
               }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor='rgba(139,92,246,.4)'; e.currentTarget.style.color='var(--accent)' }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor='var(--glass-border)'; e.currentTarget.style.color='var(--text-2)' }}>
                 <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 4v12M4 10h12"/></svg>
-                เพิ่มอุปกรณ์
+                เพิ่มอุปกรณ์ ESP32
               </button>
             )}
           </div>

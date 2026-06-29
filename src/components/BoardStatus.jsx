@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-const OFFLINE_THRESHOLD = 30 * 1000
+const OFFLINE_THRESHOLD = 5 * 60 * 1000   // 5 minutes
 
 export default function BoardStatus({ boardId = 'esp32-01' }) {
   const [status, setStatus] = useState(null)

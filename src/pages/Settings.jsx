@@ -417,48 +417,156 @@ const ROLE_STYLE = {
 }
 
 function AddDeviceModal({ userId, onSave, onClose }) {
-  const [form, setForm] = useState({ id:'', display_name:'', role:'node', location:'' })
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState('')
+  const [step,         setStep]         = useState(1)
+  const [deviceId,     setDeviceId]     = useState('')
+  const [pairingCode,  setPairingCode]  = useState('')
+  const [verifying,    setVerifying]    = useState(false)
+  const [verifyErr,    setVerifyErr]    = useState('')
+  const [form,         setForm]         = useState({ display_name:'', role:'node', location:'' })
+  const [saving,       setSaving]       = useState(false)
+  const [saveErr,      setSaveErr]      = useState('')
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
 
+  const canVerify = deviceId.trim().length > 0 && pairingCode.length === 6
+
+  async function handleVerify() {
+    setVerifyErr('')
+    if (!deviceId.trim())            { setVerifyErr('กรุณากรอก Device ID'); return }
+    if (!/^\d{6}$/.test(pairingCode)) { setVerifyErr('รหัสต้องเป็นตัวเลข 6 หลัก'); return }
+    setVerifying(true)
+    await new Promise(r => setTimeout(r, 900))   // mock async
+    setVerifying(false)
+    /* mockup: "123456" คือรหัสทดสอบ — จะเชื่อม DB จริงในภายหลัง */
+    if (pairingCode !== '123456') {
+      setVerifyErr('รหัสไม่ถูกต้อง — ตรวจสอบรหัสเครื่อง ESP32 อีกครั้ง')
+      return
+    }
+    setStep(2)
+  }
+
   async function handleSave() {
-    if (!form.id.trim() || !form.display_name.trim()) { setErr('กรุณากรอก Device ID และชื่อ'); return }
-    setSaving(true); setErr('')
+    if (!form.display_name.trim()) { setSaveErr('กรุณากรอกชื่ออุปกรณ์'); return }
+    setSaving(true); setSaveErr('')
     const { error } = await supabase.from('devices').insert({
-      id: form.id.trim(), display_name: form.display_name.trim(),
+      id: deviceId.trim(), display_name: form.display_name.trim(),
       role: form.role, location: form.location.trim(), user_id: userId,
     })
     setSaving(false)
-    if (error) { setErr(error.message); return }
+    if (error) { setSaveErr(error.message); return }
     onSave()
   }
 
   return (
     <Modal title="เพิ่มอุปกรณ์" onClose={onClose}>
-      <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-        <Field label="Device ID *"><input className="input-glass" placeholder="esp32-02" value={form.id} onChange={set('id')} /></Field>
-        <Field label="ชื่ออุปกรณ์ *"><input className="input-glass" placeholder="Node B" value={form.display_name} onChange={set('display_name')} /></Field>
-        <Field label="บทบาท">
-          <select className="input-glass" value={form.role} onChange={set('role')}>
-            <option value="node">Node (รับเสียง)</option>
-            <option value="gateway">Gateway (ส่งข้อมูล)</option>
-          </select>
-        </Field>
-        <Field label="ตำแหน่ง (ไม่บังคับ)"><input className="input-glass" placeholder="แปลง B — มุมตะวันออก" value={form.location} onChange={set('location')} /></Field>
-        {err && <div style={{ fontSize:12, color:'var(--danger)', padding:'8px 12px', background:'rgba(239,68,68,.08)', borderRadius:8 }}>{err}</div>}
-        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:4 }}>
-          <button onClick={onClose} className="btn-glass">ยกเลิก</button>
-          <button onClick={handleSave} disabled={saving} className="btn-accent">{saving ? 'กำลังบันทึก...' : 'เพิ่มอุปกรณ์'}</button>
+      <style>{`@keyframes adm-spin { to { transform: rotate(360deg); } }`}</style>
+
+      {step === 1 ? (
+        /* ── Step 1: ยืนยันรหัสจับคู่ ── */
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          <Field label="Device ID *">
+            <input className="input-glass" placeholder="esp32-02" value={deviceId}
+              onChange={e => { setDeviceId(e.target.value); setVerifyErr('') }} />
+          </Field>
+
+          <Field label="รหัสจับคู่ * (6 หลัก)">
+            <input
+              className="input-glass"
+              placeholder="● ● ● ● ● ●"
+              inputMode="numeric"
+              maxLength={6}
+              value={pairingCode}
+              onChange={e => { setPairingCode(e.target.value.replace(/\D/g, '')); setVerifyErr('') }}
+              style={{
+                letterSpacing: pairingCode ? '0.35em' : 0,
+                fontFamily: pairingCode ? 'monospace' : 'inherit',
+                fontSize: pairingCode ? 16 : 13,
+                borderColor: verifyErr ? 'rgba(239,68,68,.55)' : undefined,
+              }}
+            />
+          </Field>
+
+          {/* Error */}
+          {verifyErr && (
+            <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:12, color:'var(--danger)', padding:'9px 12px', background:'rgba(239,68,68,.08)', borderRadius:9, border:'1px solid rgba(239,68,68,.22)' }}>
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink:0 }}>
+                <circle cx="10" cy="10" r="8"/>
+                <line x1="10" y1="7" x2="10" y2="11"/>
+                <circle cx="10" cy="13.5" r=".8" fill="var(--danger)" stroke="none"/>
+              </svg>
+              {verifyErr}
+            </div>
+          )}
+
+          <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:4 }}>
+            <button onClick={onClose} className="btn-glass">ยกเลิก</button>
+            <button
+              onClick={handleVerify}
+              disabled={verifying || !canVerify}
+              className="btn-accent"
+              style={{ display:'flex', alignItems:'center', gap:7, opacity: verifying || !canVerify ? 0.5 : 1 }}>
+              {verifying ? (
+                <>
+                  <span style={{ width:13, height:13, borderRadius:'50%', border:'2px solid rgba(255,255,255,.3)', borderTopColor:'#fff', animation:'adm-spin .7s linear infinite', display:'inline-block', flexShrink:0 }} />
+                  กำลังตรวจสอบ...
+                </>
+              ) : 'ตรวจสอบรหัส →'}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* ── Step 2: กรอกรายละเอียด ── */
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+
+          {/* Verified badge */}
+          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:10, background:'rgba(34,197,94,.08)', border:'1px solid rgba(34,197,94,.25)' }}>
+            <div style={{ width:28, height:28, borderRadius:8, background:'rgba(34,197,94,.15)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+              <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="var(--ok)" strokeWidth="2.5">
+                <polyline points="4 10 8 14 16 6"/>
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize:10, color:'var(--ok)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.4px' }}>อุปกรณ์ยืนยันแล้ว</div>
+              <div style={{ fontSize:12, color:'var(--text)', fontFamily:'monospace', marginTop:1 }}>{deviceId.trim()}</div>
+            </div>
+          </div>
+
+          <Field label="ชื่ออุปกรณ์ *">
+            <input className="input-glass" placeholder="Node B" value={form.display_name} onChange={set('display_name')} />
+          </Field>
+          <Field label="บทบาท">
+            <select className="input-glass" value={form.role} onChange={set('role')}>
+              <option value="node">Node (รับเสียง)</option>
+              <option value="gateway">Gateway (ส่งข้อมูล)</option>
+            </select>
+          </Field>
+          <Field label="ตำแหน่ง (ไม่บังคับ)">
+            <input className="input-glass" placeholder="แปลง B — มุมตะวันออก" value={form.location} onChange={set('location')} />
+          </Field>
+
+          {saveErr && (
+            <div style={{ fontSize:12, color:'var(--danger)', padding:'8px 12px', background:'rgba(239,68,68,.08)', borderRadius:8 }}>
+              {saveErr}
+            </div>
+          )}
+
+          <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:4 }}>
+            <button onClick={() => { setStep(1); setVerifyErr('') }} className="btn-glass">← แก้ไข ID</button>
+            <button onClick={handleSave} disabled={saving} className="btn-accent" style={{ opacity: saving ? .6 : 1 }}>
+              {saving ? 'กำลังบันทึก...' : '+ เพิ่มอุปกรณ์'}
+            </button>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }
 
+const SETTINGS_OFFLINE_THRESHOLD = 5 * 60 * 1000   // 5 minutes
+
 function DevicesSection() {
   const { user } = useAuth()
   const [devices, setDevices] = useState([])
+  const [liveMap, setLiveMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [dbError, setDbError] = useState(false)
@@ -471,6 +579,17 @@ function DevicesSection() {
     setLoading(false)
     if (error) { setDbError(true); return }
     setDevices(data)
+    if (data && data.length > 0) {
+      const ids = data.map(d => d.id)
+      const { data: statusData } = await supabase
+        .from('board_status').select('*').in('id', ids)
+      const now = Date.now()
+      const map = {}
+      ;(statusData || []).forEach(row => {
+        map[row.id] = now - new Date(row.last_seen).getTime() < SETTINGS_OFFLINE_THRESHOLD
+      })
+      setLiveMap(map)
+    }
   }, [user])
 
   useEffect(() => { fetch() }, [fetch])
@@ -514,6 +633,18 @@ function DevicesSection() {
                   {d.location && <div style={{ fontSize:11, color:'var(--text-2)', marginTop:2 }}>{d.location}</div>}
                 </div>
                 <div className="stg-device-actions">
+                  {liveMap[d.id] !== undefined && (
+                    <span style={{
+                      display:'flex', alignItems:'center', gap:4,
+                      padding:'4px 10px', borderRadius:99, fontSize:10, fontWeight:700,
+                      background: liveMap[d.id] ? 'rgba(34,197,94,.1)' : 'rgba(239,68,68,.08)',
+                      border: `1px solid ${liveMap[d.id] ? 'rgba(34,197,94,.3)' : 'rgba(239,68,68,.2)'}`,
+                      color: liveMap[d.id] ? 'var(--ok)' : 'var(--danger)',
+                    }}>
+                      <span className={`dot ${liveMap[d.id] ? 'dot-ok' : 'dot-danger'}`} style={{ width:6, height:6 }} />
+                      {liveMap[d.id] ? 'ออนไลน์' : 'ออฟไลน์'}
+                    </span>
+                  )}
                   <select value={d.role} onChange={e => updateRole(d.id, e.target.value)}
                     style={{ padding:'5px 10px', borderRadius:99, fontSize:11, fontWeight:700, background:rs.bg, color:rs.color, border:`1px solid ${rs.color}40`, cursor:'pointer', outline:'none', appearance:'none', textAlign:'center' }}>
                     <option value="node">Node</option>
